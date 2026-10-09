@@ -31,27 +31,36 @@ def interpolate_pair(start_mask: NDArray[np.generic],
     Returns:
         An array of shape ``(missing_count, y, x)`` using the input dtype.
     """
-    start_centroid = _centroid(start_mask)
-    end_centroid = _centroid(end_mask)
-    image_center = tuple(size // 2 for size in start_mask.shape)
-    aligned_start = _relocate(start_mask != 0, image_center)
-    aligned_end = _relocate(end_mask != 0, image_center)
-
-    overlap, start_non_overlap_distance_map, end_non_overlap_distance_map = (
-        _create_shape_transition_maps(aligned_start, aligned_end))
-
-    centroids = np.linspace(start_centroid, end_centroid, missing_count + 2)[1:-1]
+    if missing_count == 0:
+        return np.empty((0, *start_mask.shape), dtype=start_mask.dtype)
+    prepared = PairInterpolator(start_mask, end_mask, missing_count, label=label)
     masks = np.empty((missing_count, *start_mask.shape), dtype=start_mask.dtype)
-    for index, centroid in enumerate(centroids):
-        start_part = _create_intermediate_shape_part(
-            overlap, start_non_overlap_distance_map, index,
-            missing_count, transition="remove")
-        end_part = _create_intermediate_shape_part(
-            overlap, end_non_overlap_distance_map, index,
-            missing_count, transition="add")
-        relocated = _relocate(start_part | end_part, centroid)
-        masks[index] = np.multiply(relocated, label, dtype=start_mask.dtype)
+    for index in range(missing_count):
+        masks[index] = prepared.plane(index)
     return masks
+
+
+class PairInterpolator:
+    """Prepare the distance maps once and evaluate intermediate planes on demand."""
+
+    def __init__(self, start_mask: NDArray[np.generic], end_mask: NDArray[np.generic],
+                 missing_count: int, *, label: np.generic) -> None:
+        self.dtype, self.label, self.count = start_mask.dtype, label, missing_count
+        start_centroid, end_centroid = _centroid(start_mask), _centroid(end_mask)
+        center = tuple(size // 2 for size in start_mask.shape)
+        self.overlap, self.start_map, self.end_map = _create_shape_transition_maps(
+            _relocate(start_mask != 0, center), _relocate(end_mask != 0, center))
+        self.centroids = np.linspace(start_centroid, end_centroid, missing_count + 2)[1:-1]
+
+    def plane(self, index: int) -> NDArray[np.generic]:
+        if not 0 <= index < self.count:
+            raise IndexError("Intermediate plane index is outside the gap.")
+        start = _create_intermediate_shape_part(
+            self.overlap, self.start_map, index, self.count, transition="remove")
+        end = _create_intermediate_shape_part(
+            self.overlap, self.end_map, index, self.count, transition="add")
+        return np.multiply(_relocate(start | end, self.centroids[index]),
+                           self.label, dtype=self.dtype)
 
 
 def _centroid(mask: NDArray[np.generic]) -> NDArray[np.float64]:

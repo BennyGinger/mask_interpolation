@@ -79,3 +79,30 @@ def test_fill_missing_masks_interpolates_time_for_every_z_plane():
 
     assert np.all(np.any(result[:, 0] != 0, axis=(1, 2)))
     assert not np.any(result[:, 1])
+
+
+@pytest.mark.parametrize("extrapolate_start", [False, True])
+@pytest.mark.parametrize("extrapolate_end", [False, True])
+def test_random_access_sequence_matches_full_interpolation(extrapolate_start, extrapolate_end):
+    from mask_interpolation import SequenceInterpolator
+    anchors = np.zeros((17, 31, 37), dtype=np.uint8)
+    anchors[2, 4:10, 6:13] = 1
+    anchors[9, 13:18, 17:25] = 1
+    anchors[14, 7:15, 11:18] = 1
+    expected = fill_missing_masks(
+        anchors, axes="TYX", interpolation_axis="T",
+        extrapolate_start=extrapolate_start, extrapolate_end=extrapolate_end)
+    prepare = SequenceInterpolator(anchors, extrapolate_start=extrapolate_start,
+                                  extrapolate_end=extrapolate_end)
+    for index in (8, 0, 16, 12, 3, 9, 4, 7, 1, 13, 6, 11, 15, 2, 14, 5, 10):
+        np.testing.assert_array_equal(prepare(index), expected[index])
+    np.testing.assert_array_equal(prepare(8), expected[8])
+
+
+def test_random_access_empty_sequence_and_invalid_index():
+    from mask_interpolation import SequenceInterpolator
+    empty = np.zeros((3, 8, 9), dtype=np.uint8)
+    prepare = SequenceInterpolator(empty)
+    np.testing.assert_array_equal(prepare(1), empty[1])
+    with pytest.raises(IndexError):
+        prepare(3)
